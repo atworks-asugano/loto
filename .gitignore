@@ -1,0 +1,6 @@
+# サーバー固有の設定（DB接続情報・幹事パスワード）はコミットしない
+config.php
+
+.DS_Store
+Thumbs.db
+.vscode/
