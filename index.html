@@ -73,7 +73,7 @@
           <div style="margin-top:6px"><button class="btn small" type="button" id="a-add-low">下位賞品を追加</button></div>
           <div class="field" style="margin-top:1rem"><label for="a-order">抽選の順番</label>
             <select id="a-order"><option value="top-first">上位賞品から</option><option value="lower-first">下位賞品から</option></select>
-            <p class="fine">「1人1品まで」のときに下位賞品から始めると、下位賞品の当選者は上位賞品の抽選から外れます。</p>
+            <p class="fine">下位賞品から始めるときは、先に「上位賞品を先に抽選する（非公開）」を実行してください。実行しないと、下位賞品の当選者が上位賞品の抽選から外れます。</p>
           </div>
           <div class="checks">
             <label><input type="checkbox" id="a-open">応募を受け付ける</label>
@@ -98,6 +98,10 @@
         </section>
         <section class="panel" aria-labelledby="a-res-h">
           <h2 id="a-res-h">抽選結果</h2>
+          <div class="predraw">
+            <button class="btn small" type="button" id="a-predraw">上位賞品を先に抽選する（非公開）</button>
+            <p class="fine">上位賞品の当選者を先に決めて、発表だけ最後にする場合に使います。受付を締め切ってから押してください。結果は発表するまでどの画面にも表示されません。</p>
+          </div>
           <ul id="a-res" class="res-list"></ul>
           <div class="exports">
             <a class="btn small" href="api.php?a=export&amp;type=entries">応募一覧をCSVで保存</a>

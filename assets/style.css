@@ -172,3 +172,4 @@ input[type=password]{width:100%;background:var(--surface);border:1.5px solid var
 .danger{margin-top:1.2rem;border-top:1.5px dashed var(--line);padding-top:.8rem}
 .res-list li>button{grid-column:2;justify-self:end}
 .res-list li>.st{grid-column:2;justify-self:end}
+.predraw{border:1.5px dashed var(--line);border-radius:6px;padding:10px 12px;margin-bottom:12px}

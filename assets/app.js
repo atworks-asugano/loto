@@ -229,6 +229,14 @@ $('#m-add').addEventListener('click', async () => {
   try { await api('add_manual', { name, choice }); $('#m-name').value = ''; toast(`${name}さんを追加しました`); refresh(); }
   catch (e) { toast(e.message); }
 });
+confirmClick($('#a-predraw'), '上位賞品を抽選する（もう一度押す）', async () => {
+  try {
+    const r = await api('predraw_top', {});
+    let msg = r.done.length ? `${r.done.length}件の上位賞品を抽選しました（未発表）` : '新しく抽選する上位賞品はありませんでした';
+    if (r.skipped.length) msg += `。希望者がいない賞品：${r.skipped.join('、')}`;
+    toast(msg); refresh();
+  } catch (e) { toast(e.message); }
+});
 confirmClick($('#a-reset-all'), '本当に消す（もう一度押す）', async () => { try { await api('reset_all', {}); toast('抽選結果を消しました'); refresh(); } catch (e) { toast(e.message); } });
 confirmClick($('#a-purge'), '本当に削除する（もう一度押す）', async () => { try { await api('purge', {}); toast('応募データと結果を削除しました'); refresh(); } catch (e) { toast(e.message); } });
 
@@ -259,7 +267,7 @@ function renderAdmin() {
 
   $('#a-res').replaceChildren(...prizes().map(p => {
     const d = draws()[p.id];
-    const status = !d ? '未抽選' : d.status === 'revealed' ? '発表済み' : 'あみだ作成済み（未発表）';
+    const status = !d ? '未抽選' : d.status === 'revealed' ? '発表済み' : d.predrawn ? '事前抽選済み（未発表）' : 'あみだ作成済み（未発表）';
     const kids = [h('span', { class: 'who' }, p.name), h('span', { class: 'st' }, status)];
     if (d && d.status === 'revealed') kids.push(h('span', null, (d.winners || []).map(w => w.name).join('、')));
     if (d) {
@@ -300,7 +308,7 @@ function winnerStarts(d) {
 
 /* ---------- 抽選会画面 ---------- */
 const stage = (() => {
-  const S = { idx: 0, phase: 'idle', draw: null, busy: false, excluded: new Set(), sig: '', g: null };
+  const S = { idx: 0, phase: 'idle', draw: null, busy: false, excluded: new Set(), sig: '', g: null, shown: new Set() };
   const svg = $('#s-svg');
   const list = () => prizes();
   function cur() { const l = list(); if (S.idx >= l.length) S.idx = Math.max(0, l.length - 1); return l[S.idx]; }
@@ -424,13 +432,14 @@ const stage = (() => {
     $('#s-prev').disabled = S.busy || S.idx === 0; $('#s-next').disabled = S.busy || last;
     a.disabled = S.busy || !p;
     if (S.phase === 'idle') { a.textContent = 'あみだを引く'; if (p && !pool(p).cands.length) a.disabled = true; }
+    else if (S.phase === 'pre') a.textContent = 'あみだを引く';
     else if (S.phase === 'drawn') a.textContent = '結果をめくる';
     else { a.textContent = last ? '抽選はすべて終了' : '次の景品へ'; if (last) a.disabled = true; }
   }
   function sigOf(p) {
     if (!p) return 'none';
     const d = draws()[p.id];
-    if (d) return d.status + ':' + p.id + ':' + d.at;
+    if (d) return d.status + ':' + p.id + ':' + d.at + ':' + S.shown.has(p.id);
     const pl = pool(p);
     return 'i:' + p.id + ':' + p.name + ':' + pl.cands.map(e => e.id + e.name).join(',') + ':' + pl.fallback;
   }
@@ -443,6 +452,11 @@ const stage = (() => {
       head(p, `当選 ${d.slots.length}名 ／ 候補 ${d.candidates.length}名`);
       draw(d, { rungs: 'static', revealed: true, traces: true });
       $('#s-names').textContent = (d.winners || []).map(w => w.name + ' さん').join('　'); $('#s-banner').hidden = false;
+    } else if (d && d.predrawn && !S.shown.has(p.id)) {
+      // 事前抽選済み：名前だけ書いた状態から、通常と同じ流れで見せる
+      S.phase = 'pre'; S.draw = d;
+      head(p, `当選 ${d.slots.length}名 ／ 候補 ${d.candidates.length}名` + (d.fallback ? '（希望者がいないため全員から）' : ''));
+      draw({ candidates: d.candidates, rows: d.rows, rungs: [], slots: [] }, { rungs: 'none' });
     } else if (d) {
       S.phase = 'drawn'; S.draw = d;
       head(p, `当選 ${d.slots.length}名 ／ 候補 ${d.candidates.length}名`);
@@ -469,7 +483,7 @@ const stage = (() => {
     let d;
     try { d = (await api('draw', { prizeId: p.id, excluded: [...S.excluded] })).draw; }
     catch (e) { toast(e.message); S.busy = false; S.sig = ''; refresh(); return; }
-    st.admin.draws[p.id] = d; S.draw = d; candList(null);
+    st.admin.draws[p.id] = d; S.draw = d; S.shown.add(p.id); candList(null);
     head(p, `当選 ${d.slots.length}名 ／ 候補 ${d.candidates.length}名` + (d.fallback ? '（希望者がいないため全員から）' : ''));
     BGM.play('draw');
     const ms = draw(d, { rungs: d.status === 'revealed' ? 'static' : 'animate', revealed: d.status === 'revealed', traces: d.status === 'revealed' });
@@ -502,7 +516,7 @@ const stage = (() => {
   }
   function action() {
     if (S.busy) return;
-    if (S.phase === 'idle') doDraw(); else if (S.phase === 'drawn') doReveal(); else select(S.idx + 1);
+    if (S.phase === 'idle' || S.phase === 'pre') doDraw(); else if (S.phase === 'drawn') doReveal(); else select(S.idx + 1);
   }
   $('#s-action').addEventListener('click', action);
   $('#s-prev').addEventListener('click', () => select(S.idx - 1));

@@ -8,7 +8,7 @@
  * 幹事:  GET  ?a=me           ログイン状態
  *        POST ?a=login / logout
  *        GET  ?a=admin_state  設定・応募一覧・抽選結果
- *        POST ?a=save_config / add_manual / delete_entry / draw / reveal / reset / reset_all / purge
+ *        POST ?a=save_config / add_manual / delete_entry / draw / predraw_top / reveal / reset / reset_all / purge
  *        GET  ?a=export&type=entries|results   CSV出力
  */
 declare(strict_types=1);
@@ -354,6 +354,45 @@ function drawsMap(): array
     return $map;
 }
 
+/** あみだくじを作って当選者を決め、未発表（draft）として保存する。対象者がいなければ null */
+function createDraw(array $c, array $prize, array $excluded, bool $predrawn): ?array
+{
+    [$cands, $fallback] = computePool($c, $prize, $excluded);
+    if (!$cands) {
+        return null;
+    }
+    $n          = count($cands);
+    $k          = min($prize['count'], $n);
+    $ladder     = generateLadder($n, $k);
+    $candidates = array_map(fn($e) => ['id' => (int)$e['id'], 'name' => $e['name']], shuffled($cands));
+    $ends       = ladderEnds($n, $ladder['rows'], $ladder['rungs']);
+    $winners    = array_map(fn($slot) => $candidates[array_search($slot, $ends, true)], $ladder['slots']);
+    $draw = [
+        'prizeId'    => $prize['id'],
+        'prizeName'  => $prize['name'],
+        'tier'       => $prize['tier'],
+        'fallback'   => $fallback,
+        'predrawn'   => $predrawn,
+        'candidates' => $candidates,
+        'rows'       => $ladder['rows'],
+        'rungs'      => $ladder['rungs'],
+        'slots'      => $ladder['slots'],
+        'winners'    => $winners,
+        'at'         => (int)(microtime(true) * 1000),
+    ];
+    try {
+        $st = db()->prepare("INSERT INTO lot_draws (prize_id, status, data, created_at) VALUES (?, 'draft', ?, ?)");
+        $st->execute([$prize['id'], json_encode($draw, JSON_UNESCAPED_UNICODE), now()]);
+    } catch (PDOException $e) {
+        if ($e->getCode() === '23000') {
+            fail(409, '別の画面で先に抽選されました。画面を更新してください');
+        }
+        throw $e;
+    }
+    $draw['status'] = 'draft';
+    return $draw;
+}
+
 /* ---------- CSV ---------- */
 
 function csvCell(mixed $v): string
@@ -578,39 +617,33 @@ try {
                 out(['draw' => $d, 'existing' => true]);
             }
             $excluded = is_array($in['excluded'] ?? null) ? $in['excluded'] : [];
-            [$cands, $fallback] = computePool($c, $prize, $excluded);
-            if (!$cands) {
+            $draw = createDraw($c, $prize, $excluded, false);
+            if (!$draw) {
                 fail(409, '抽選の対象になる人がいません');
-            }
-            $n          = count($cands);
-            $k          = min($prize['count'], $n);
-            $ladder     = generateLadder($n, $k);
-            $candidates = array_map(fn($e) => ['id' => (int)$e['id'], 'name' => $e['name']], shuffled($cands));
-            $ends       = ladderEnds($n, $ladder['rows'], $ladder['rungs']);
-            $winners    = array_map(fn($slot) => $candidates[array_search($slot, $ends, true)], $ladder['slots']);
-            $draw = [
-                'prizeId'    => $prize['id'],
-                'prizeName'  => $prize['name'],
-                'tier'       => $prize['tier'],
-                'fallback'   => $fallback,
-                'candidates' => $candidates,
-                'rows'       => $ladder['rows'],
-                'rungs'      => $ladder['rungs'],
-                'slots'      => $ladder['slots'],
-                'winners'    => $winners,
-                'at'         => (int)(microtime(true) * 1000),
-            ];
-            try {
-                $st = db()->prepare("INSERT INTO lot_draws (prize_id, status, data, created_at) VALUES (?, 'draft', ?, ?)");
-                $st->execute([$prize['id'], json_encode($draw, JSON_UNESCAPED_UNICODE), now()]);
-            } catch (PDOException $e) {
-                if ($e->getCode() === '23000') {
-                    fail(409, '別の画面で先に抽選されました。画面を更新してください');
-                }
-                throw $e;
             }
             $draw['status'] = 'draft';
             out(['draw' => $draw]);
+        }
+
+        case 'predraw_top': {
+            // 上位賞品を先に抽選して未発表のまま保存する（発表は抽選会の最後）
+            requirePost();
+            requireAdmin(true);
+            $c       = loadConfig();
+            $done    = [];
+            $skipped = [];
+            $exists  = array_flip(db()->query('SELECT prize_id FROM lot_draws')->fetchAll(PDO::FETCH_COLUMN));
+            foreach (prizeList($c) as $prize) {
+                if ($prize['tier'] !== 'top' || isset($exists[$prize['id']])) {
+                    continue;
+                }
+                if (createDraw($c, $prize, [], true)) {
+                    $done[] = $prize['name'];
+                } else {
+                    $skipped[] = $prize['name'];
+                }
+            }
+            out(['done' => $done, 'skipped' => $skipped]);
         }
 
         case 'reveal': {
