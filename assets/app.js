@@ -47,15 +47,19 @@ async function api(action, body) {
 
 /* ---------- 設定まわり ---------- */
 const cfg = () => (st.admin && st.admin.config) || { top: [], lower: [] };
+const DEFAULT_LABEL = { top: '上位賞', lower: '下位賞' };
+const tierLabel = (c, tier) => (tier === 'top' ? c.topLabel : c.lowerLabel) || DEFAULT_LABEL[tier];
 function prizes() {
   const c = cfg();
-  const top = (c.top || []).filter(p => p.name).map(p => ({ id: p.id, name: p.name, note: p.note || '', tier: 'top', count: 1 }));
-  const low = (c.lower || []).filter(p => p.name).map(p => ({ id: p.id, name: p.name, tier: 'lower', count: Math.min(3, Math.max(1, Number(p.count) || 1)) }));
+  const top = (c.top || []).filter(p => p.name).map(p => ({ id: p.id, name: p.name, note: p.note || '', label: p.label || tierLabel(c, 'top'), tier: 'top', count: 1 }));
+  const low = (c.lower || []).filter(p => p.name).map(p => ({ id: p.id, name: p.name, label: p.label || tierLabel(c, 'lower'), tier: 'lower', count: Math.min(3, Math.max(1, Number(p.count) || 1)) }));
   return c.order === 'lower-first' ? [...low, ...top] : [...top, ...low];
 }
 const topPrizes = () => prizes().filter(p => p.tier === 'top');
 const entries = () => (st.admin ? st.admin.entries : []);
 const draws = () => (st.admin ? st.admin.draws : {});
+const images = () => (st.admin && st.admin.images) || {};
+const imageUrl = id => `${API}?a=image&id=${encodeURIComponent(id)}&v=${images()[id] || 0}`;
 function prizeName(id) { const p = prizes().find(x => x.id === id); return p ? p.name : '（削除された賞品）'; }
 const entryUrl = () => location.origin + location.pathname;
 
@@ -130,6 +134,7 @@ function renderEntry() {
   }
   if (st.pubErr) { stEl.classList.add('warn'); stEl.textContent = st.pubErr; }
   $('#e-title').textContent = p.title; document.title = p.title;
+  $('#e-legend').textContent = `${p.topLabel || DEFAULT_LABEL.top}の中から、欲しい賞品をひとつ選んでください`;
   const mine = p.mine;
   if (mine && !nameTouched && !$('#e-name').value) $('#e-name').value = mine.name;
   if (mine && entrySel == null) entrySel = mine.choice;
@@ -140,12 +145,12 @@ function renderEntry() {
   for (const t of p.top) {
     box.append(h('label', { class: 'choice' },
       h('input', { type: 'radio', name: 'choice', value: t.id, checked: entrySel === t.id }),
-      h('span', { class: 'c-name' }, t.name),
+      h('span', { class: 'c-name' }, t.label && t.label !== p.topLabel ? `${t.label}　${t.name}` : t.name),
       h('span', { class: 'c-count' }, `希望 ${p.counts[t.id] || 0}人`),
       t.note ? h('span', { class: 'c-note' }, t.note) : null));
   }
   const lb = $('#e-lower'); lb.replaceChildren();
-  if (p.lower.length) lb.append(h('h2', null, '下位賞品は全員が抽選対象'), h('ul', null, p.lower.map(l => h('li', null, `${l.name}（${l.count}名）`))));
+  if (p.lower.length) lb.append(h('h2', null, `${p.lowerLabel || DEFAULT_LABEL.lower}は応募者全員が抽選対象です`), h('ul', null, p.lower.map(l => h('li', null, l.label && l.label !== p.lowerLabel ? h('span', { class: 'l-label' }, l.label) : null, `${l.name}（${l.count}名）`))));
 
   if (!st.pubErr) {
     if (!p.entryOpen) { stEl.classList.add('warn'); stEl.textContent = mine ? `受付は締め切りました。あなたの希望は「${p.top.find(t => t.id === mine.choice)?.name || '—'}」です。` : '受付は締め切りました。'; lock = true; }
@@ -157,13 +162,13 @@ function renderEntry() {
   const wb = $('#e-win'); wb.replaceChildren();
   for (const r of p.results.filter(r => r.mine)) wb.append(h('div', { class: 'win' }, h('span', { class: 'hanko' }, '当選'), h('p', null, `「${r.prizeName}」が当たりました`)));
   const bb = $('#e-board'); bb.replaceChildren();
-  if (p.results.length) bb.append(h('h2', null, '当選者発表'), h('dl', null, p.results.map(r => [h('dt', null, r.prizeName), h('dd', null, r.names.join('、'))])));
+  if (p.results.length) bb.append(h('h2', null, '当選者発表'), h('dl', null, p.results.map(r => [h('dt', null, r.prizeLabel ? `${r.prizeLabel}　${r.prizeName}` : r.prizeName), h('dd', null, r.names.join('、'))])));
 }
 $('#e-form').addEventListener('submit', async e => {
   e.preventDefault();
   const name = $('#e-name').value.trim();
   if (!name) { toast('お名前を入力してください'); $('#e-name').focus(); return; }
-  if (!entrySel) { toast('上位賞品をひとつ選んでください'); return; }
+  if (!entrySel) { toast('欲しい賞品をひとつ選んでください'); return; }
   saving = true; renderEntry();
   try { await api('entry', { name, choice: entrySel }); nameTouched = false; toast('応募しました'); await refresh(); }
   catch (err) { toast(err.message); }
@@ -176,34 +181,95 @@ const newId = p => p + Date.now().toString(36) + Math.floor(rnd() * 1e4).toStrin
 function topRow(p, i) {
   return h('div', { class: 'row top', 'data-id': p.id },
     h('span', { class: 'idx' }, String(i + 1)),
-    h('input', { type: 'text', class: 'p-name', value: p.name || '', placeholder: '賞品名', 'aria-label': `上位賞品${i + 1} 賞品名`, maxlength: '30' }),
-    h('input', { type: 'text', class: 'p-note', value: p.note || '', placeholder: 'ひとこと説明（任意）', 'aria-label': `上位賞品${i + 1} 説明`, maxlength: '40' }),
-    h('button', { class: 'btn small', type: 'button', onclick: e => { e.target.closest('.row').remove(); renumber(); adminDirty = true; } }, '削除'));
+    h('input', { type: 'text', class: 'p-label', value: p.label || '', placeholder: '賞名（任意）', 'aria-label': `希望制の賞品${i + 1} 賞名`, maxlength: '12' }),
+    h('input', { type: 'text', class: 'p-name', value: p.name || '', placeholder: '賞品名', 'aria-label': `希望制の賞品${i + 1} 賞品名`, maxlength: '30' }),
+    h('input', { type: 'text', class: 'p-note', value: p.note || '', placeholder: 'ひとこと説明（任意）', 'aria-label': `希望制の賞品${i + 1} 説明`, maxlength: '40' }),
+    imgCell(),
+    h('button', { class: 'btn small p-del', type: 'button', onclick: e => { e.target.closest('.row').remove(); renumber(); adminDirty = true; } }, '削除'));
 }
 function lowRow(p) {
   return h('div', { class: 'row low', 'data-id': p.id },
-    h('input', { type: 'text', class: 'p-name', value: p.name || '', placeholder: '賞品名', 'aria-label': '下位賞品 賞品名', maxlength: '30' }),
+    h('input', { type: 'text', class: 'p-label', value: p.label || '', placeholder: '賞名（任意）', 'aria-label': '全員抽選の賞品 賞名', maxlength: '12' }),
+    h('input', { type: 'text', class: 'p-name', value: p.name || '', placeholder: '賞品名', 'aria-label': '全員抽選の賞品 賞品名', maxlength: '30' }),
     h('select', { class: 'p-count', 'aria-label': '当選人数' }, [1, 2, 3].map(n => h('option', { value: n, selected: Number(p.count || 1) === n }, `当選 ${n}名`))),
-    h('button', { class: 'btn small', type: 'button', onclick: e => { e.target.closest('.row').remove(); adminDirty = true; } }, '削除'));
+    imgCell(),
+    h('button', { class: 'btn small p-del', type: 'button', onclick: e => { e.target.closest('.row').remove(); adminDirty = true; } }, '削除'));
+}
+/* ---------- 景品の画像 ---------- */
+// 画像は選んだ時点でアップロードする（「設定を保存」とは別）
+function imgCell() {
+  const file = h('input', { type: 'file', accept: 'image/jpeg', 'aria-label': '景品の画像（JPEG）' });
+  const cell = h('div', { class: 'p-img' },
+    h('span', { class: 'thumb-slot' }),
+    file,
+    h('button', { class: 'btn small p-up', type: 'button', onclick: () => file.click() }, '画像'),
+    h('button', { class: 'btn small p-rm', type: 'button', hidden: true, 'aria-label': '画像を外す' }, '×'));
+  file.addEventListener('change', async () => {
+    const f = file.files[0]; file.value = '';
+    if (f) await uploadImage(cell.closest('.row').dataset.id, f, cell);
+  });
+  confirmClick(cell.querySelector('.p-rm'), '外す', async () => {
+    try { const r = await api('delete_image', { prizeId: cell.closest('.row').dataset.id }); st.admin.images = r.images; syncThumbs(); toast('画像を外しました'); }
+    catch (e) { toast(e.message); }
+  });
+  return cell;
+}
+// 大きな写真はそのままだと重いので、長辺1920pxのJPEGに縮小して送る（撮影場所などの情報も消える）
+async function toJpegBase64(f) {
+  const bmp = await createImageBitmap(f, { imageOrientation: 'from-image' });
+  const sc = Math.min(1, 1920 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas');
+  c.width = Math.round(bmp.width * sc); c.height = Math.round(bmp.height * sc);
+  const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.drawImage(bmp, 0, 0, c.width, c.height); bmp.close && bmp.close();
+  const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.86));
+  if (!blob) throw new Error('画像を変換できませんでした');
+  return await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1]); fr.onerror = () => rej(new Error('画像を読み込めませんでした')); fr.readAsDataURL(blob); });
+}
+async function uploadImage(prizeId, f, cell) {
+  if (!/^image\/jpe?g$/i.test(f.type) && !/\.jpe?g$/i.test(f.name)) { toast('JPEG（.jpg）の画像を選んでください'); return; }
+  const btn = cell.querySelector('.p-up'); btn.disabled = true; btn.textContent = '送信中…';
+  try {
+    const data = await toJpegBase64(f);
+    const r = await api('upload_image', { prizeId, data });
+    st.admin.images = r.images; syncThumbs(); toast('画像を登録しました');
+  } catch (e) { toast(e.message || '画像を登録できませんでした'); }
+  finally { btn.disabled = false; syncThumbs(); }
+}
+function syncThumbs() {
+  for (const row of document.querySelectorAll('#a-top .row, #a-low .row')) {
+    const id = row.dataset.id, has = !!images()[id], slot = row.querySelector('.thumb-slot');
+    const want = has ? imageUrl(id) : '';
+    if (slot.dataset.src !== want) {
+      slot.dataset.src = want;
+      slot.replaceChildren(has ? h('img', { class: 'thumb', src: want, alt: '登録済みの画像' }) : h('span', { class: 'thumb none' }, 'なし'));
+    }
+    row.querySelector('.p-rm').hidden = !has;
+    row.querySelector('.p-up').textContent = row.querySelector('.p-up').disabled ? '送信中…' : (has ? '変更' : '画像');
+  }
 }
 function renumber() { [...$('#a-top').children].forEach((r, i) => { r.querySelector('.idx').textContent = String(i + 1); }); }
 function fillAdminForm() {
   const c = cfg();
   $('#a-title').value = c.title || '';
+  $('#a-top-label').value = c.topLabel || DEFAULT_LABEL.top;
+  $('#a-low-label').value = c.lowerLabel || DEFAULT_LABEL.lower;
   $('#a-top').replaceChildren(...(c.top || []).map(topRow));
   $('#a-low').replaceChildren(...(c.lower || []).map(lowRow));
+  syncThumbs();
   $('#a-order').value = c.order || 'top-first';
   $('#a-open').checked = !!c.entryOpen; $('#a-excl').checked = !!c.excludeWinners; $('#a-fall').checked = !!c.topFallbackAll;
 }
 $('#view-admin').addEventListener('input', e => { if (e.target.closest('[aria-labelledby="a-set-h"]')) adminDirty = true; });
-$('#a-add-top').addEventListener('click', () => { $('#a-top').append(topRow({ id: newId('t') }, $('#a-top').children.length)); adminDirty = true; });
-$('#a-add-low').addEventListener('click', () => { $('#a-low').append(lowRow({ id: newId('l'), count: 1 })); adminDirty = true; });
+$('#a-add-top').addEventListener('click', () => { $('#a-top').append(topRow({ id: newId('t') }, $('#a-top').children.length)); adminDirty = true; syncThumbs(); });
+$('#a-add-low').addEventListener('click', () => { $('#a-low').append(lowRow({ id: newId('l'), count: 1 })); adminDirty = true; syncThumbs(); });
 $('#a-save').addEventListener('click', async () => {
   const config = {
     title: $('#a-title').value.trim(), order: $('#a-order').value,
+    topLabel: $('#a-top-label').value.trim(), lowerLabel: $('#a-low-label').value.trim(),
     entryOpen: $('#a-open').checked, excludeWinners: $('#a-excl').checked, topFallbackAll: $('#a-fall').checked,
-    top: [...$('#a-top').children].map(r => ({ id: r.dataset.id, name: r.querySelector('.p-name').value.trim(), note: r.querySelector('.p-note').value.trim() })),
-    lower: [...$('#a-low').children].map(r => ({ id: r.dataset.id, name: r.querySelector('.p-name').value.trim(), count: Number(r.querySelector('.p-count').value) })),
+    top: [...$('#a-top').children].map(r => ({ id: r.dataset.id, label: r.querySelector('.p-label').value.trim(), name: r.querySelector('.p-name').value.trim(), note: r.querySelector('.p-note').value.trim() })),
+    lower: [...$('#a-low').children].map(r => ({ id: r.dataset.id, label: r.querySelector('.p-label').value.trim(), name: r.querySelector('.p-name').value.trim(), count: Number(r.querySelector('.p-count').value) })),
   };
   $('#a-save').disabled = true; $('#a-save-st').textContent = '保存中…';
   try { const r = await api('save_config', { config }); st.admin.config = r.config; adminDirty = false; fillAdminForm(); $('#a-save-st').textContent = '保存しました'; }
@@ -229,10 +295,10 @@ $('#m-add').addEventListener('click', async () => {
   try { await api('add_manual', { name, choice }); $('#m-name').value = ''; toast(`${name}さんを追加しました`); refresh(); }
   catch (e) { toast(e.message); }
 });
-confirmClick($('#a-predraw'), '上位賞品を抽選する（もう一度押す）', async () => {
+confirmClick($('#a-predraw'), '希望制の賞品を抽選する（もう一度押す）', async () => {
   try {
     const r = await api('predraw_top', {});
-    let msg = r.done.length ? `${r.done.length}件の上位賞品を抽選しました（未発表）` : '新しく抽選する上位賞品はありませんでした';
+    let msg = r.done.length ? `${r.done.length}件の希望制の賞品を抽選しました（未発表）` : '新しく抽選する希望制の賞品はありませんでした';
     if (r.skipped.length) msg += `。希望者がいない賞品：${r.skipped.join('、')}`;
     toast(msg); refresh();
   } catch (e) { toast(e.message); }
@@ -246,6 +312,7 @@ function renderAdmin() {
   const cfgJson = JSON.stringify(st.admin.config);
   if (!adminFilled || (!adminDirty && cfgJson !== lastCfg)) { fillAdminForm(); adminFilled = true; }
   lastCfg = cfgJson;
+  syncThumbs();
   if (lastQr !== entryUrl()) {
     const wrap = $('#a-qr-wrap'), box = h('div', { class: 'qrbox' });
     wrap.replaceChildren(box, h('p', { class: 'url' }, entryUrl()));
@@ -268,7 +335,7 @@ function renderAdmin() {
   $('#a-res').replaceChildren(...prizes().map(p => {
     const d = draws()[p.id];
     const status = !d ? '未抽選' : d.status === 'revealed' ? '発表済み' : d.predrawn ? '事前抽選済み（未発表）' : 'あみだ作成済み（未発表）';
-    const kids = [h('span', { class: 'who' }, p.name), h('span', { class: 'st' }, status)];
+    const kids = [h('span', { class: 'who' }, `${p.label}　${p.name}`), h('span', { class: 'st' }, status)];
     if (d && d.status === 'revealed') kids.push(h('span', null, (d.winners || []).map(w => w.name).join('、')));
     if (d) {
       const b = h('button', { class: 'btn small', type: 'button' }, 'やり直す');
@@ -308,7 +375,7 @@ function winnerStarts(d) {
 
 /* ---------- 抽選会画面 ---------- */
 const stage = (() => {
-  const S = { idx: 0, phase: 'idle', draw: null, busy: false, excluded: new Set(), sig: '', g: null, shown: new Set() };
+  const S = { idx: 0, phase: 'idle', draw: null, busy: false, excluded: new Set(), sig: '', g: null, shown: new Set(), show: false };
   const svg = $('#s-svg');
   const list = () => prizes();
   function cur() { const l = list(); if (S.idx >= l.length) S.idx = Math.max(0, l.length - 1); return l[S.idx]; }
@@ -411,13 +478,13 @@ const stage = (() => {
     }
   }
   function head(p, info) {
-    $('#s-tier').textContent = p ? (p.tier === 'top' ? '上位賞品' : '下位賞品') : '';
+    $('#s-tier').textContent = p ? p.label : '';
     $('#s-prize').textContent = p ? p.name : '景品が設定されていません';
     $('#s-meta').textContent = info || '';
   }
   function chips() {
     const box = $('#s-chips'); box.replaceChildren();
-    list().forEach((p, i) => box.append(h('button', { class: 'chip' + (draws()[p.id]?.status === 'revealed' ? ' done' : ''), type: 'button', role: 'tab', 'aria-current': i === S.idx ? 'true' : 'false', onclick: () => select(i) }, h('small', null, p.tier === 'top' ? '上位' : '下位'), p.name)));
+    list().forEach((p, i) => box.append(h('button', { class: 'chip' + (draws()[p.id]?.status === 'revealed' ? ' done' : ''), type: 'button', role: 'tab', 'aria-current': i === S.idx ? 'true' : 'false', onclick: () => select(i) }, h('small', null, p.label), p.name)));
   }
   function candList(p) {
     const box = $('#s-cand-list'); box.replaceChildren();
@@ -427,9 +494,26 @@ const stage = (() => {
     if (!all.length) box.append(h('p', { class: 'fine' }, '対象者がいません'));
     for (const e of all) box.append(h('label', null, h('input', { type: 'checkbox', checked: !S.excluded.has(e.id), onchange: ev => { if (ev.target.checked) S.excluded.delete(e.id); else S.excluded.add(e.id); S.sig = ''; refreshStage(); } }), e.name));
   }
+  // 景品ページ：抽選の前に景品の画像と名前を黒板いっぱいに表示する
+  function showcase(on) {
+    const p = cur(), el = $('#s-show'), btn = $('#s-show-btn');
+    S.show = !!(on && p);
+    btn.setAttribute('aria-pressed', String(S.show)); btn.textContent = S.show ? 'あみだに戻る' : '景品を見る';
+    if (!S.show) { el.hidden = true; return; }
+    const has = !!images()[p.id], img = $('#s-show-img');
+    el.classList.toggle('noimg', !has);
+    img.hidden = !has;
+    if (has && img.dataset.src !== imageUrl(p.id)) { img.dataset.src = imageUrl(p.id); img.src = imageUrl(p.id); img.alt = p.name; }
+    $('#s-show-label').textContent = p.label;
+    $('#s-show-name').textContent = p.name;
+    $('#s-show-note').textContent = p.note || '';
+    $('#s-show-count').textContent = p.tier === 'top' ? '希望した方の中から 1名' : `応募者全員の中から ${p.count}名`;
+    el.hidden = false;
+  }
   function controls() {
     const p = cur(), a = $('#s-action'), last = S.idx >= list().length - 1;
     $('#s-prev').disabled = S.busy || S.idx === 0; $('#s-next').disabled = S.busy || last;
+    $('#s-show-btn').disabled = S.busy || !p;
     a.disabled = S.busy || !p;
     if (S.phase === 'idle') { a.textContent = 'あみだを引く'; if (p && !pool(p).cands.length) a.disabled = true; }
     else if (S.phase === 'pre') a.textContent = 'あみだを引く';
@@ -439,9 +523,10 @@ const stage = (() => {
   function sigOf(p) {
     if (!p) return 'none';
     const d = draws()[p.id];
-    if (d) return d.status + ':' + p.id + ':' + d.at + ':' + S.shown.has(p.id);
+    const img = ':' + (images()[p.id] || 0) + ':' + (p.note || '');
+    if (d) return d.status + ':' + p.id + ':' + p.label + img + ':' + d.at + ':' + S.shown.has(p.id);
     const pl = pool(p);
-    return 'i:' + p.id + ':' + p.name + ':' + pl.cands.map(e => e.id + e.name).join(',') + ':' + pl.fallback;
+    return 'i:' + p.id + ':' + p.label + img + ':' + p.name + ':' + pl.cands.map(e => e.id + e.name).join(',') + ':' + pl.fallback;
   }
   function load() {
     const p = cur(); chips(); $('#s-banner').hidden = true;
@@ -467,7 +552,7 @@ const stage = (() => {
       head(p, pl.cands.length ? `当選 ${k}名 ／ 候補 ${pl.cands.length}名` + (pl.fallback ? '（希望者がいないため全員から）' : '') : '');
       draw({ candidates: pl.cands, rows: rowsFor(pl.cands.length), rungs: [], slots: [] }, { rungs: 'none', emptyText: p.tier === 'top' ? 'この賞品の希望者はいません' : '抽選の対象になる人がいません' });
     }
-    S.sig = sigOf(p); candList(p); controls();
+    S.sig = sigOf(p); candList(p); controls(); showcase(S.show);
   }
   function refreshStage() {
     const ok = st.isAdmin && st.admin;
@@ -476,7 +561,7 @@ const stage = (() => {
     if (S.busy) { chips(); return; }
     if (sigOf(cur()) !== S.sig) load(); else { chips(); controls(); }
   }
-  function select(i) { if (S.busy) return; S.idx = Math.max(0, Math.min(i, list().length - 1)); S.excluded.clear(); S.sig = ''; load(); BGM.play('wait'); }
+  function select(i) { if (S.busy) return; S.idx = Math.max(0, Math.min(i, list().length - 1)); S.excluded.clear(); S.sig = ''; S.show = false; load(); BGM.play('wait'); }
   async function doDraw() {
     const p = cur(); if (!p) return;
     S.busy = true; controls(); $('#s-cands').open = false;
@@ -516,11 +601,13 @@ const stage = (() => {
   }
   function action() {
     if (S.busy) return;
+    if (S.show) showcase(false); // 景品ページを表示中なら閉じてから進める
     if (S.phase === 'idle' || S.phase === 'pre') doDraw(); else if (S.phase === 'drawn') doReveal(); else select(S.idx + 1);
   }
   $('#s-action').addEventListener('click', action);
   $('#s-prev').addEventListener('click', () => select(S.idx - 1));
   $('#s-next').addEventListener('click', () => select(S.idx + 1));
+  $('#s-show-btn').addEventListener('click', () => { if (!S.busy) showcase(!S.show); });
   $('#s-bgm').addEventListener('click', e => { const on = !BGM.enabled; BGM.setEnabled(on); if (on) BGM.play('wait'); e.target.setAttribute('aria-pressed', String(on)); e.target.textContent = on ? 'BGMあり' : 'BGMなし'; });
   $('#s-vol').addEventListener('input', e => BGM.setVolume(e.target.value / 100));
   $('#s-full').addEventListener('click', () => {
@@ -533,6 +620,7 @@ const stage = (() => {
     if (e.key === 'Enter' || e.key === ' ') { if (/BUTTON|A|SUMMARY/.test(e.target.tagName)) return; e.preventDefault(); action(); }
     else if (e.key === 'ArrowRight') select(S.idx + 1);
     else if (e.key === 'ArrowLeft') select(S.idx - 1);
+    else if (e.key === 'p' || e.key === 'P') { if (!S.busy) showcase(!S.show); }
   });
   return {
     enter() { S.sig = ''; BGM.play('wait'); },
