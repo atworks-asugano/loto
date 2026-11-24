@@ -9,6 +9,8 @@
  *        POST ?a=login / logout
  *        GET  ?a=admin_state  設定・応募一覧・抽選結果
  *        POST ?a=save_config / add_manual / delete_entry / draw / predraw_top / reveal / reset / reset_all / purge
+ *        POST ?a=upload_image / delete_image   景品の画像
+ *        GET  ?a=image&id=...                  景品の画像（幹事のみ）
  *        GET  ?a=export&type=entries|results   CSV出力
  */
 declare(strict_types=1);
@@ -21,6 +23,10 @@ header('X-Content-Type-Options: nosniff');
 const TOKEN_COOKIE = 'lot_token';
 const MAX_NAME     = 12;
 const ID_PATTERN   = '/^[A-Za-z0-9_-]{1,40}$/';
+const MAX_LABEL    = 12;
+const DEFAULT_TOP_LABEL   = '上位賞';
+const DEFAULT_LOWER_LABEL = '下位賞';
+const MAX_IMAGE_BYTES     = 3 * 1024 * 1024; // 画面側で縮小してから送るため、通常は1MB未満
 
 function out(array $data, int $code = 200): never
 {
@@ -157,11 +163,14 @@ function defaultConfig(): array
         'excludeWinners' => true,
         'topFallbackAll' => false,
         'order'          => 'top-first',
-        'top'            => array_map(fn($i) => ['id' => 't' . $i, 'name' => '上位賞品 ' . $i, 'note' => ''], range(1, 5)),
+        // 画面に出す賞の名前（幹事画面で変更できる）。景品ごとの「賞名」が空欄のときに使う
+        'topLabel'       => DEFAULT_TOP_LABEL,
+        'lowerLabel'     => DEFAULT_LOWER_LABEL,
+        'top'            => array_map(fn($i) => ['id' => 't' . $i, 'name' => '景品 ' . $i, 'note' => ''], range(1, 5)),
         'lower'          => [
-            ['id' => 'l1', 'name' => '下位賞品 A', 'count' => 3],
-            ['id' => 'l2', 'name' => '下位賞品 B', 'count' => 2],
-            ['id' => 'l3', 'name' => '下位賞品 C', 'count' => 1],
+            ['id' => 'l1', 'name' => '景品 A', 'count' => 3],
+            ['id' => 'l2', 'name' => '景品 B', 'count' => 2],
+            ['id' => 'l3', 'name' => '景品 C', 'count' => 1],
         ],
     ];
 }
@@ -176,16 +185,18 @@ function loadConfig(): array
 /** 抽選順に並べた景品一覧 */
 function prizeList(array $c): array
 {
+    $topLabel   = ($c['topLabel'] ?? '') !== '' ? $c['topLabel'] : DEFAULT_TOP_LABEL;
+    $lowerLabel = ($c['lowerLabel'] ?? '') !== '' ? $c['lowerLabel'] : DEFAULT_LOWER_LABEL;
     $top = [];
     foreach ($c['top'] as $p) {
         if (($p['name'] ?? '') !== '') {
-            $top[] = ['id' => $p['id'], 'name' => $p['name'], 'note' => $p['note'] ?? '', 'tier' => 'top', 'count' => 1];
+            $top[] = ['id' => $p['id'], 'name' => $p['name'], 'note' => $p['note'] ?? '', 'label' => ($p['label'] ?? '') !== '' ? $p['label'] : $topLabel, 'tier' => 'top', 'count' => 1];
         }
     }
     $low = [];
     foreach ($c['lower'] as $p) {
         if (($p['name'] ?? '') !== '') {
-            $low[] = ['id' => $p['id'], 'name' => $p['name'], 'tier' => 'lower', 'count' => max(1, min(3, (int)($p['count'] ?? 1)))];
+            $low[] = ['id' => $p['id'], 'name' => $p['name'], 'label' => ($p['label'] ?? '') !== '' ? $p['label'] : $lowerLabel, 'tier' => 'lower', 'count' => max(1, min(3, (int)($p['count'] ?? 1)))];
         }
     }
     return $c['order'] === 'lower-first' ? array_merge($low, $top) : array_merge($top, $low);
@@ -342,6 +353,23 @@ function computePool(array $c, array $prize, array $excluded): array
     return [array_values($cands), $fallback];
 }
 
+/** 画像がある景品と更新時刻（表示のキャッシュ切り替え用） */
+function imagesMap(): array
+{
+    $map = [];
+    try {
+        foreach (db()->query('SELECT prize_id, updated_at FROM lot_images') as $row) {
+            $map[$row['prize_id']] = strtotime($row['updated_at']);
+        }
+    } catch (PDOException $e) {
+        // lot_images テーブルを作成していない場合は、画像なしとして動かす
+        if ($e->getCode() !== '42S02') {
+            throw $e;
+        }
+    }
+    return $map;
+}
+
 function drawsMap(): array
 {
     $map = [];
@@ -370,6 +398,7 @@ function createDraw(array $c, array $prize, array $excluded, bool $predrawn): ?a
     $draw = [
         'prizeId'    => $prize['id'],
         'prizeName'  => $prize['name'],
+        'prizeLabel' => $prize['label'],
         'tier'       => $prize['tier'],
         'fallback'   => $fallback,
         'predrawn'   => $predrawn,
@@ -443,22 +472,29 @@ try {
                 $counts[$r['choice']] = (int)$r['n'];
             }
             $total   = (int)db()->query('SELECT COUNT(*) FROM lot_entries')->fetchColumn();
+            $labels  = [];
+            foreach (prizeList($c) as $p) {
+                $labels[$p['id']] = $p['label'];
+            }
             $results = [];
             $rows    = db()->query("SELECT data FROM lot_draws WHERE status = 'revealed' ORDER BY revealed_at, prize_id")->fetchAll();
             foreach ($rows as $r) {
                 $d = json_decode($r['data'], true) ?: [];
                 $results[] = [
-                    'prizeName' => $d['prizeName'] ?? '',
+                    'prizeName'  => $d['prizeName'] ?? '',
+                    'prizeLabel' => $labels[$d['prizeId'] ?? ''] ?? ($d['prizeLabel'] ?? ''),
                     'names'     => array_column($d['winners'] ?? [], 'name'),
                     'mine'      => $mine ? in_array((int)$mine['id'], array_map('intval', array_column($d['winners'] ?? [], 'id')), true) : false,
                 ];
             }
             $prizes = prizeList($c);
             out([
-                'title'     => $c['title'],
-                'entryOpen' => (bool)$c['entryOpen'],
-                'top'       => array_values(array_map(fn($p) => ['id' => $p['id'], 'name' => $p['name'], 'note' => $p['note']], array_filter($prizes, fn($p) => $p['tier'] === 'top'))),
-                'lower'     => array_values(array_map(fn($p) => ['name' => $p['name'], 'count' => $p['count']], array_filter($prizes, fn($p) => $p['tier'] === 'lower'))),
+                'title'      => $c['title'],
+                'entryOpen'  => (bool)$c['entryOpen'],
+                'topLabel'   => ($c['topLabel'] ?? '') !== '' ? $c['topLabel'] : DEFAULT_TOP_LABEL,
+                'lowerLabel' => ($c['lowerLabel'] ?? '') !== '' ? $c['lowerLabel'] : DEFAULT_LOWER_LABEL,
+                'top'        => array_values(array_map(fn($p) => ['id' => $p['id'], 'name' => $p['name'], 'note' => $p['note'], 'label' => $p['label']], array_filter($prizes, fn($p) => $p['tier'] === 'top'))),
+                'lower'      => array_values(array_map(fn($p) => ['name' => $p['name'], 'count' => $p['count'], 'label' => $p['label']], array_filter($prizes, fn($p) => $p['tier'] === 'lower'))),
                 'counts'    => (object)$counts,
                 'total'     => $total,
                 'mine'      => $mine ? ['name' => $mine['name'], 'choice' => $mine['choice']] : null,
@@ -480,7 +516,7 @@ try {
                 fail(422, 'お名前を入力してください');
             }
             if (!in_array($choice, topIds($c), true)) {
-                fail(422, '上位賞品をひとつ選んでください');
+                fail(422, '欲しい賞品をひとつ選んでください');
             }
             $th = tokenHash(true);
             $st = db()->prepare(
@@ -536,7 +572,7 @@ try {
                 'choice' => $e['choice'],
                 'manual' => (bool)$e['manual'],
             ], db()->query('SELECT id, name, choice, manual FROM lot_entries ORDER BY id')->fetchAll());
-            out(['config' => loadConfig(), 'entries' => $entries, 'draws' => (object)drawsMap()]);
+            out(['config' => loadConfig(), 'entries' => $entries, 'draws' => (object)drawsMap(), 'images' => (object)imagesMap()]);
         }
 
         case 'save_config': {
@@ -549,6 +585,8 @@ try {
                 'excludeWinners' => !empty($in['excludeWinners']),
                 'topFallbackAll' => !empty($in['topFallbackAll']),
                 'order'          => ($in['order'] ?? '') === 'lower-first' ? 'lower-first' : 'top-first',
+                'topLabel'       => cleanText($in['topLabel'] ?? '', MAX_LABEL) ?: DEFAULT_TOP_LABEL,
+                'lowerLabel'     => cleanText($in['lowerLabel'] ?? '', MAX_LABEL) ?: DEFAULT_LOWER_LABEL,
                 'top'            => [],
                 'lower'          => [],
             ];
@@ -559,7 +597,7 @@ try {
                     continue;
                 }
                 $seen[$id]    = true;
-                $cfg['top'][] = ['id' => $id, 'name' => cleanText($p['name'] ?? '', 30), 'note' => cleanText($p['note'] ?? '', 40)];
+                $cfg['top'][] = ['id' => $id, 'name' => cleanText($p['name'] ?? '', 30), 'note' => cleanText($p['note'] ?? '', 40), 'label' => cleanText($p['label'] ?? '', MAX_LABEL)];
             }
             foreach (array_slice(is_array($in['lower'] ?? null) ? $in['lower'] : [], 0, 50) as $p) {
                 $id = (string)($p['id'] ?? '');
@@ -567,11 +605,84 @@ try {
                     continue;
                 }
                 $seen[$id]      = true;
-                $cfg['lower'][] = ['id' => $id, 'name' => cleanText($p['name'] ?? '', 30), 'count' => max(1, min(3, (int)($p['count'] ?? 1)))];
+                $cfg['lower'][] = ['id' => $id, 'name' => cleanText($p['name'] ?? '', 30), 'label' => cleanText($p['label'] ?? '', MAX_LABEL), 'count' => max(1, min(3, (int)($p['count'] ?? 1)))];
             }
             $st = db()->prepare('INSERT INTO lot_config (id, data, updated_at) VALUES (1, ?, ?) ON DUPLICATE KEY UPDATE data = VALUES(data), updated_at = VALUES(updated_at)');
             $st->execute([json_encode($cfg, JSON_UNESCAPED_UNICODE), now()]);
+            // 削除された景品の画像を消す
+            $keep = array_merge(array_column($cfg['top'], 'id'), array_column($cfg['lower'], 'id'));
+            if (imagesMap()) {
+                if ($keep) {
+                    $st = db()->prepare('DELETE FROM lot_images WHERE prize_id NOT IN (' . implode(',', array_fill(0, count($keep), '?')) . ')');
+                    $st->execute($keep);
+                } else {
+                    db()->exec('DELETE FROM lot_images');
+                }
+            }
             out(['config' => $cfg]);
+        }
+
+        case 'upload_image': {
+            requirePost();
+            requireAdmin(true);
+            $in = input();
+            $id = (string)($in['prizeId'] ?? '');
+            if (!preg_match(ID_PATTERN, $id)) {
+                fail(422, '景品が見つかりません');
+            }
+            $b64 = (string)($in['data'] ?? '');
+            if ($b64 === '' || strlen($b64) > (int)ceil(MAX_IMAGE_BYTES * 4 / 3) + 4) {
+                fail(413, '画像が大きすぎます（3MBまで）');
+            }
+            $bin = base64_decode($b64, true);
+            if ($bin === false || $bin === '') {
+                fail(422, '画像を読み取れませんでした');
+            }
+            // 中身がJPEGであることを確認する（拡張子やContent-Typeは信用しない）
+            $info = @getimagesizefromstring($bin);
+            if (!$info || ($info[2] ?? 0) !== IMAGETYPE_JPEG) {
+                fail(415, 'JPEG形式の画像を選んでください');
+            }
+            try {
+                $st = db()->prepare('INSERT INTO lot_images (prize_id, mime, data, updated_at) VALUES (?, ?, ?, ?)
+                                     ON DUPLICATE KEY UPDATE mime = VALUES(mime), data = VALUES(data), updated_at = VALUES(updated_at)');
+                $st->bindValue(1, $id);
+                $st->bindValue(2, 'image/jpeg');
+                $st->bindValue(3, $bin, PDO::PARAM_LOB);
+                $st->bindValue(4, now());
+                $st->execute();
+            } catch (PDOException $e) {
+                if ($e->getCode() === '42S02') {
+                    fail(500, '画像用のテーブル（lot_images）がありません。schema.sql を実行してください');
+                }
+                throw $e;
+            }
+            out(['images' => (object)imagesMap()]);
+        }
+
+        case 'delete_image': {
+            requirePost();
+            requireAdmin(true);
+            $st = db()->prepare('DELETE FROM lot_images WHERE prize_id = ?');
+            $st->execute([(string)(input()['prizeId'] ?? '')]);
+            out(['images' => (object)imagesMap()]);
+        }
+
+        case 'image': {
+            // 景品は当日まで秘密にしておけるよう、幹事としてログインしている場合だけ返す
+            requireAdmin(false);
+            $st = db()->prepare('SELECT mime, data FROM lot_images WHERE prize_id = ?');
+            $st->execute([(string)($_GET['id'] ?? '')]);
+            $row = $st->fetch();
+            if (!$row) {
+                fail(404, '画像がありません');
+            }
+            header('Content-Type: image/jpeg');
+            header('Content-Length: ' . strlen($row['data']));
+            header('Cache-Control: private, max-age=86400');
+            header("Content-Security-Policy: default-src 'none'");
+            echo $row['data'];
+            exit;
         }
 
         case 'add_manual': {
@@ -585,7 +696,7 @@ try {
                 fail(422, 'お名前を入力してください');
             }
             if (!in_array($choice, topIds($c), true)) {
-                fail(422, '上位賞品を選んでください');
+                fail(422, '希望の賞品を選んでください');
             }
             $st = db()->prepare('INSERT INTO lot_entries (token_hash, name, choice, manual, created_at, updated_at) VALUES (NULL, ?, ?, 1, ?, ?)');
             $st->execute([$name, $choice, now(), now()]);
@@ -626,7 +737,7 @@ try {
         }
 
         case 'predraw_top': {
-            // 上位賞品を先に抽選して未発表のまま保存する（発表は抽選会の最後）
+            // 希望制（上位）の賞品を先に抽選して未発表のまま保存する（発表は抽選会の最後）
             requirePost();
             requireAdmin(true);
             $c       = loadConfig();
@@ -681,9 +792,11 @@ try {
         case 'export': {
             requireAdmin(false);
             $c     = loadConfig();
-            $names = [];
+            $names  = [];
+            $labels = [];
             foreach (prizeList($c) as $p) {
-                $names[$p['id']] = $p['name'];
+                $names[$p['id']]  = $p['name'];
+                $labels[$p['id']] = $p['label'];
             }
             if (($_GET['type'] ?? '') === 'results') {
                 $rows = [];
@@ -691,21 +804,22 @@ try {
                     foreach ($d['winners'] ?? [] as $w) {
                         $rows[] = [
                             $d['prizeName'] ?? '',
-                            $d['tier'] === 'top' ? '上位' : '下位',
+                            $labels[$d['prizeId'] ?? ''] ?? ($d['prizeLabel'] ?? ''),
+                            $d['tier'] === 'top' ? '希望制' : '全員抽選',
                             $w['name'],
                             $d['status'] === 'revealed' ? '発表済み' : '未発表',
                             $d['revealedAt'] ? date('Y-m-d H:i:s', intdiv((int)$d['revealedAt'], 1000)) : '',
                         ];
                     }
                 }
-                sendCsv('results.csv', ['賞品', '区分', '当選者', '状態', '発表日時'], $rows);
+                sendCsv('results.csv', ['賞品', '賞名', '抽選方法', '当選者', '状態', '発表日時'], $rows);
             }
             $rows = [];
             $no   = 0;
             foreach (db()->query('SELECT name, choice, manual, created_at, updated_at FROM lot_entries ORDER BY id') as $e) {
                 $rows[] = [++$no, $e['name'], $names[$e['choice']] ?? $e['choice'], $e['manual'] ? '手入力' : 'QR', $e['created_at'], $e['updated_at']];
             }
-            sendCsv('entries.csv', ['No.', 'お名前', '希望の上位賞品', '登録方法', '応募日時', '更新日時'], $rows);
+            sendCsv('entries.csv', ['No.', 'お名前', '希望の賞品', '登録方法', '応募日時', '更新日時'], $rows);
         }
 
         default:

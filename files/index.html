@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>忘年会 抽選会</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Yusei+Magic&family=BIZ+UDPGothic:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" defer></script>
+<script src="assets/bgm.js" defer></script>
+<script src="assets/app.js" defer></script>
+</head>
+<body>
+
+<!-- 応募画面 -->
+<main id="view-entry" class="view" aria-labelledby="e-h">
+  <header class="mast">
+    <p id="e-title">忘年会 抽選会</p>
+    <h1 id="e-h">抽選券</h1>
+  </header>
+  <section class="ticket">
+    <div class="ticket-no"><span>No.</span><strong id="e-no">---</strong></div>
+    <div id="e-status" class="msg" role="status"></div>
+    <form id="e-form" novalidate>
+      <div class="field">
+        <label for="e-name">お名前（当日、黒板に書き出します）</label>
+        <input id="e-name" type="text" maxlength="12" autocomplete="nickname" placeholder="例：山田 花子">
+      </div>
+      <fieldset>
+        <legend id="e-legend">欲しい賞品をひとつ選んでください</legend>
+        <div id="e-choices" class="choices"></div>
+      </fieldset>
+      <div style="margin-top:1rem"><button id="e-submit" class="btn primary" type="submit">この賞品で応募する</button></div>
+      <p class="fine">締め切りまでは何度でも変更できます。同じスマホ・同じブラウザから開いてください。</p>
+    </form>
+    <div class="lower" id="e-lower"></div>
+  </section>
+  <section id="e-win"></section>
+  <section id="e-board" class="board-list"></section>
+</main>
+
+<!-- 幹事ログイン（幹事画面・抽選会画面で共用） -->
+<template id="tpl-login">
+  <form class="login" novalidate>
+    <h1>幹事ログイン</h1>
+    <div class="field"><label>幹事パスワード<input type="password" name="password" autocomplete="current-password"></label></div>
+    <div class="row-btn"><button class="btn primary" type="submit">ログイン</button><span class="fine" role="status"></span></div>
+    <p class="fine"><a href="#entry">応募画面に戻る</a></p>
+  </form>
+</template>
+
+<!-- 幹事画面 -->
+<main id="view-admin" class="view">
+  <div class="login-slot"></div>
+  <div id="a-body" hidden>
+    <div class="abar">
+      <h1>抽選会 幹事画面</h1>
+      <nav><a class="btn small" href="#stage">抽選会を始める</a><a class="btn small" href="#entry">応募画面を見る</a><button class="btn small" type="button" id="a-logout">ログアウト</button></nav>
+    </div>
+    <div class="agrid">
+      <div style="display:grid;gap:18px">
+        <section class="panel" aria-labelledby="a-set-h">
+          <h2 id="a-set-h">景品と受付の設定</h2>
+          <div class="field"><label for="a-title">会の名前</label><input id="a-title" type="text" maxlength="40"></div>
+          <h3>希望制の賞品（希望者の中から各1名）</h3>
+          <div class="field label-field"><label for="a-top-label">賞名</label><input id="a-top-label" type="text" maxlength="12" placeholder="上位賞"></div>
+          <div id="a-top" class="rows"></div>
+          <div style="margin-top:6px"><button class="btn small" type="button" id="a-add-top">希望制の賞品を追加</button></div>
+          <h3>全員抽選の賞品（応募者全員から抽選）</h3>
+          <div class="field label-field"><label for="a-low-label">賞名</label><input id="a-low-label" type="text" maxlength="12" placeholder="下位賞"></div>
+          <div id="a-low" class="rows"></div>
+          <div style="margin-top:6px"><button class="btn small" type="button" id="a-add-low">全員抽選の賞品を追加</button></div>
+          <p class="fine">賞名は応募画面と抽選会画面に表示されます。景品ごとに別の賞名にしたいときは、各行の「賞名」欄に入力してください（空欄なら上の賞名を使います）。</p>
+          <p class="fine">「画像」でJPEG画像を登録すると、抽選会画面の「景品を見る」で大きく表示できます。画像は選んだ時点で保存され、幹事としてログインした画面にだけ表示されます。</p>
+          <div class="field" style="margin-top:1rem"><label for="a-order">抽選の順番</label>
+            <select id="a-order"><option value="top-first">希望制の賞品から</option><option value="lower-first">全員抽選の賞品から</option></select>
+            <p class="fine">全員抽選の賞品から始めるときは、先に「希望制の賞品を先に抽選する（非公開）」を実行してください。実行しないと、全員抽選の賞品の当選者が希望制の賞品の抽選から外れます。</p>
+          </div>
+          <div class="checks">
+            <label><input type="checkbox" id="a-open">応募を受け付ける</label>
+            <label><input type="checkbox" id="a-excl">1人1品まで（当選した人は、それ以降の抽選から外す）</label>
+            <label><input type="checkbox" id="a-fall">希望制の賞品に希望者がいないときは、応募者全員から抽選する</label>
+          </div>
+          <div class="saveline"><button class="btn primary" type="button" id="a-save">設定を保存</button><span id="a-save-st" class="fine" role="status"></span></div>
+        </section>
+        <section class="panel" aria-labelledby="a-ent-h">
+          <h2 id="a-ent-h">応募状況 <span id="a-count" class="fine"></span></h2>
+          <div id="a-tally" class="tally"></div>
+          <div class="tbl-wrap"><table><thead><tr><th>No.</th><th>お名前</th><th>希望の賞品</th><th></th></tr></thead><tbody id="a-rows"></tbody></table></div>
+          <h3>スマホがない人を手入力で追加</h3>
+          <div class="manual"><input id="m-name" type="text" maxlength="12" placeholder="お名前" aria-label="お名前"><select id="m-choice" aria-label="希望の賞品"></select><button class="btn small" type="button" id="m-add">追加</button></div>
+        </section>
+      </div>
+      <div style="display:grid;gap:18px">
+        <section class="panel" aria-labelledby="a-qr-h">
+          <h2 id="a-qr-h">応募用QRコード</h2>
+          <div id="a-qr-wrap"></div>
+          <div class="saveline"><button class="btn small" type="button" id="a-qr-big">大きく映す</button></div>
+        </section>
+        <section class="panel" aria-labelledby="a-res-h">
+          <h2 id="a-res-h">抽選結果</h2>
+          <div class="predraw">
+            <button class="btn small" type="button" id="a-predraw">希望制の賞品を先に抽選する（非公開）</button>
+            <p class="fine">希望制の賞品の当選者を先に決めて、発表だけ最後にする場合に使います。受付を締め切ってから押してください。結果は発表するまでどの画面にも表示されません。</p>
+          </div>
+          <ul id="a-res" class="res-list"></ul>
+          <div class="exports">
+            <a class="btn small" href="api.php?a=export&amp;type=entries">応募一覧をCSVで保存</a>
+            <a class="btn small" href="api.php?a=export&amp;type=results">当選結果をCSVで保存</a>
+          </div>
+          <div class="danger">
+            <div class="saveline"><button class="btn small" type="button" id="a-reset-all">抽選結果をすべて消す</button></div>
+            <div class="saveline"><button class="btn small" type="button" id="a-purge">応募データと結果をすべて削除</button></div>
+            <p class="fine">会が終わったら、応募者の名前を残さないよう「すべて削除」を実行してください。</p>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+  <div id="qr-full" class="qr-full" hidden role="dialog" aria-label="応募用QRコード">
+    <div>
+      <h2 id="qr-full-title">スマホで読み取って応募</h2>
+      <div class="qrbox" id="qr-full-code"></div>
+      <p>読み取ったら、欲しい賞品をひとつ選んでください</p>
+      <button class="tool" type="button" id="qr-close" style="margin-top:12px">閉じる</button>
+    </div>
+  </div>
+</main>
+
+<!-- 抽選会画面 -->
+<main id="view-stage" class="view">
+  <div class="login-slot"></div>
+  <div class="stage-top">
+    <div class="chips" id="s-chips" role="tablist" aria-label="景品"></div>
+    <div class="stage-tools">
+      <button class="tool" type="button" id="s-bgm" aria-pressed="true">BGMあり</button>
+      <label class="vol">音量<input type="range" id="s-vol" min="0" max="100" value="50"></label>
+      <button class="tool" type="button" id="s-full">全画面</button>
+      <a class="tool" href="#admin">幹事画面</a>
+    </div>
+  </div>
+  <div class="frame" id="s-frame">
+    <div class="board">
+      <div class="bhead"><p class="tier" id="s-tier"></p><h2 id="s-prize"></h2><p class="meta" id="s-meta"></p></div>
+      <div class="ladder"><svg id="s-svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="あみだくじ"></svg><div class="empty-note" id="s-empty" hidden></div></div>
+      <div class="banner" id="s-banner" hidden aria-live="polite"><p>当選おめでとうございます</p><div class="names" id="s-names"></div></div>
+      <section class="showcase" id="s-show" hidden aria-labelledby="s-show-name">
+        <div class="sc-photo"><img id="s-show-img" alt=""></div>
+        <div class="sc-text"><p class="sc-label" id="s-show-label"></p><h2 id="s-show-name"></h2><p class="sc-note" id="s-show-note"></p><p class="sc-count" id="s-show-count"></p></div>
+      </section>
+    </div>
+  </div>
+  <div class="controls">
+    <button class="btn" type="button" id="s-prev">前の景品</button>
+    <button class="btn" type="button" id="s-show-btn" aria-pressed="false">景品を見る</button>
+    <button class="btn go" type="button" id="s-action">あみだを引く</button>
+    <button class="btn" type="button" id="s-next">次の景品</button>
+    <details class="cands" id="s-cands"><summary>候補者を確認（不在の人を外す）</summary><div class="list" id="s-cand-list"></div></details>
+  </div>
+</main>
+
+<div class="toast" id="toast" hidden role="status"></div>
+</body>
+</html>

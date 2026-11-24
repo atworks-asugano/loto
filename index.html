@@ -30,7 +30,7 @@
         <input id="e-name" type="text" maxlength="12" autocomplete="nickname" placeholder="例：山田 花子">
       </div>
       <fieldset>
-        <legend>欲しい上位賞品をひとつ選んでください</legend>
+        <legend id="e-legend">欲しい賞品をひとつ選んでください</legend>
         <div id="e-choices" class="choices"></div>
       </fieldset>
       <div style="margin-top:1rem"><button id="e-submit" class="btn primary" type="submit">この賞品で応募する</button></div>
@@ -65,29 +65,33 @@
         <section class="panel" aria-labelledby="a-set-h">
           <h2 id="a-set-h">景品と受付の設定</h2>
           <div class="field"><label for="a-title">会の名前</label><input id="a-title" type="text" maxlength="40"></div>
-          <h3>上位賞品（希望者の中から各1名）</h3>
+          <h3>希望制の賞品（希望者の中から各1名）</h3>
+          <div class="field label-field"><label for="a-top-label">賞名</label><input id="a-top-label" type="text" maxlength="12" placeholder="上位賞"></div>
           <div id="a-top" class="rows"></div>
-          <div style="margin-top:6px"><button class="btn small" type="button" id="a-add-top">上位賞品を追加</button></div>
-          <h3>下位賞品（応募者全員から抽選）</h3>
+          <div style="margin-top:6px"><button class="btn small" type="button" id="a-add-top">希望制の賞品を追加</button></div>
+          <h3>全員抽選の賞品（応募者全員から抽選）</h3>
+          <div class="field label-field"><label for="a-low-label">賞名</label><input id="a-low-label" type="text" maxlength="12" placeholder="下位賞"></div>
           <div id="a-low" class="rows"></div>
-          <div style="margin-top:6px"><button class="btn small" type="button" id="a-add-low">下位賞品を追加</button></div>
+          <div style="margin-top:6px"><button class="btn small" type="button" id="a-add-low">全員抽選の賞品を追加</button></div>
+          <p class="fine">賞名は応募画面と抽選会画面に表示されます。景品ごとに別の賞名にしたいときは、各行の「賞名」欄に入力してください（空欄なら上の賞名を使います）。</p>
+          <p class="fine">「画像」でJPEG画像を登録すると、抽選会画面の「景品を見る」で大きく表示できます。画像は選んだ時点で保存され、幹事としてログインした画面にだけ表示されます。</p>
           <div class="field" style="margin-top:1rem"><label for="a-order">抽選の順番</label>
-            <select id="a-order"><option value="top-first">上位賞品から</option><option value="lower-first">下位賞品から</option></select>
-            <p class="fine">下位賞品から始めるときは、先に「上位賞品を先に抽選する（非公開）」を実行してください。実行しないと、下位賞品の当選者が上位賞品の抽選から外れます。</p>
+            <select id="a-order"><option value="top-first">希望制の賞品から</option><option value="lower-first">全員抽選の賞品から</option></select>
+            <p class="fine">全員抽選の賞品から始めるときは、先に「希望制の賞品を先に抽選する（非公開）」を実行してください。実行しないと、全員抽選の賞品の当選者が希望制の賞品の抽選から外れます。</p>
           </div>
           <div class="checks">
             <label><input type="checkbox" id="a-open">応募を受け付ける</label>
             <label><input type="checkbox" id="a-excl">1人1品まで（当選した人は、それ以降の抽選から外す）</label>
-            <label><input type="checkbox" id="a-fall">上位賞品に希望者がいないときは、応募者全員から抽選する</label>
+            <label><input type="checkbox" id="a-fall">希望制の賞品に希望者がいないときは、応募者全員から抽選する</label>
           </div>
           <div class="saveline"><button class="btn primary" type="button" id="a-save">設定を保存</button><span id="a-save-st" class="fine" role="status"></span></div>
         </section>
         <section class="panel" aria-labelledby="a-ent-h">
           <h2 id="a-ent-h">応募状況 <span id="a-count" class="fine"></span></h2>
           <div id="a-tally" class="tally"></div>
-          <div class="tbl-wrap"><table><thead><tr><th>No.</th><th>お名前</th><th>希望の上位賞品</th><th></th></tr></thead><tbody id="a-rows"></tbody></table></div>
+          <div class="tbl-wrap"><table><thead><tr><th>No.</th><th>お名前</th><th>希望の賞品</th><th></th></tr></thead><tbody id="a-rows"></tbody></table></div>
           <h3>スマホがない人を手入力で追加</h3>
-          <div class="manual"><input id="m-name" type="text" maxlength="12" placeholder="お名前" aria-label="お名前"><select id="m-choice" aria-label="希望の上位賞品"></select><button class="btn small" type="button" id="m-add">追加</button></div>
+          <div class="manual"><input id="m-name" type="text" maxlength="12" placeholder="お名前" aria-label="お名前"><select id="m-choice" aria-label="希望の賞品"></select><button class="btn small" type="button" id="m-add">追加</button></div>
         </section>
       </div>
       <div style="display:grid;gap:18px">
@@ -99,8 +103,8 @@
         <section class="panel" aria-labelledby="a-res-h">
           <h2 id="a-res-h">抽選結果</h2>
           <div class="predraw">
-            <button class="btn small" type="button" id="a-predraw">上位賞品を先に抽選する（非公開）</button>
-            <p class="fine">上位賞品の当選者を先に決めて、発表だけ最後にする場合に使います。受付を締め切ってから押してください。結果は発表するまでどの画面にも表示されません。</p>
+            <button class="btn small" type="button" id="a-predraw">希望制の賞品を先に抽選する（非公開）</button>
+            <p class="fine">希望制の賞品の当選者を先に決めて、発表だけ最後にする場合に使います。受付を締め切ってから押してください。結果は発表するまでどの画面にも表示されません。</p>
           </div>
           <ul id="a-res" class="res-list"></ul>
           <div class="exports">
@@ -143,10 +147,15 @@
       <div class="bhead"><p class="tier" id="s-tier"></p><h2 id="s-prize"></h2><p class="meta" id="s-meta"></p></div>
       <div class="ladder"><svg id="s-svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="あみだくじ"></svg><div class="empty-note" id="s-empty" hidden></div></div>
       <div class="banner" id="s-banner" hidden aria-live="polite"><p>当選おめでとうございます</p><div class="names" id="s-names"></div></div>
+      <section class="showcase" id="s-show" hidden aria-labelledby="s-show-name">
+        <div class="sc-photo"><img id="s-show-img" alt=""></div>
+        <div class="sc-text"><p class="sc-label" id="s-show-label"></p><h2 id="s-show-name"></h2><p class="sc-note" id="s-show-note"></p><p class="sc-count" id="s-show-count"></p></div>
+      </section>
     </div>
   </div>
   <div class="controls">
     <button class="btn" type="button" id="s-prev">前の景品</button>
+    <button class="btn" type="button" id="s-show-btn" aria-pressed="false">景品を見る</button>
     <button class="btn go" type="button" id="s-action">あみだを引く</button>
     <button class="btn" type="button" id="s-next">次の景品</button>
     <details class="cands" id="s-cands"><summary>候補者を確認（不在の人を外す）</summary><div class="list" id="s-cand-list"></div></details>
